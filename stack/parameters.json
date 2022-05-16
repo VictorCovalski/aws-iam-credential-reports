@@ -1,0 +1,7 @@
+{
+    "Parameters": {
+        "BucketName": "my-reports-bucket",
+        "AuthorizedPrincipalOrgIds": "orgid1,orgid2..",
+        "ConsolidateReportCronExpression": "cron(15 0 * * ? *)"
+    }
+}

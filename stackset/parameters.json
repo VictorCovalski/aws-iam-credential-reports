@@ -1,0 +1,7 @@
+{
+    "Parameters": {
+        "ReportsBucket": "my-reports-bucket",
+        "GenerateReportCronExpression": "cron(00 15 * * ? *)",
+        "GetReportCronExpression": "cron(10 15 * * ? *)"
+    }
+}

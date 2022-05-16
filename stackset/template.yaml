@@ -1,0 +1,137 @@
+AWSTemplateFormatVersion: '2010-09-09'
+
+Description: |
+ Creates a Lambda Function that generates and 
+ publishes IAM Credential Reports to a S3 Bucket when triggered 
+ by Event Bridge Rules. 
+Parameters:
+  ReportsBucket:
+    Type: String
+    Description: The S3 Bucket Name to which reports will be uploaded.
+  GenerateReportCronExpression:
+    Type: String
+    Default: 'cron(0 10 * * ? *)'
+    Description: The Event Bridge Rule Cron Expression that triggers the IAM Report Generation.
+  GetReportCronExpression:
+    Type: String
+    Default: 'cron(0 9 * * ? *)'
+    Description: |
+      The Event Bridge Rule Cron Expression that triggers the IAM Report Download and Upload
+      to the specified S3 Bucket. Note: this cron must run at least 20 minutes AFTER `GenerateReportCronExpression`.
+  
+Resources:
+  LambdaReportGen:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: 'ggia-iam-report-gen'
+      Handler: index.handler
+      Runtime: python3.9
+      Timeout: 5
+      Role: !GetAtt LambdaRole.Arn
+      Environment:
+        Variables:
+          BUCKET_NAME: !Ref ReportsBucket
+      Code:
+        ZipFile: |
+          import boto3
+          import os
+          from datetime import datetime
+          from base64 import b64decode
+
+          BUCKET_NAME =  os.environ['BUCKET_NAME']
+
+          iam = boto3.client('iam')
+
+          def ensure_plaintext(content):
+            try:
+              return b64decode(content, validate=True)
+            except:
+              return content
+
+          def generate_credential_report():
+            iam.generate_credential_report()
+
+          def get_credential_report():
+              response = iam.get_credential_report()
+              return ensure_plaintext(response['Content'])
+
+          def save_credential_report(data, account_id):
+            s3 = boto3.client('s3')
+            now = datetime.now().strftime("%Y/%m/%d")
+            key = f'{now}/report-{account_id}.csv'
+            s3.put_object(Bucket=BUCKET_NAME, Key=key, Body=data)
+
+          def handler(event, context):
+              if event['task'] == 'generate_credential_report':
+                  generate_credential_report()
+              elif event['task'] == 'get_credential_report':
+                  report = get_credential_report()
+                  account_id = context.invoked_function_arn.split(':')[4]
+                  save_credential_report(report, account_id)
+  LambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: iam-report-gen
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action: 'sts:AssumeRole'
+            Principal:
+              Service: 'lambda.amazonaws.com'
+      Policies:
+        - PolicyName: iam
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - iam:GenerateCredentialReport
+                  - iam:GetCredentialReport
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - 's3:PutObject'
+                Resource: !Join
+                - ''
+                - - 'arn:'
+                  - !Ref AWS::Partition
+                  - ':'
+                  - 's3:::'
+                  - !Ref ReportsBucket
+                  - '/*'
+  GenerateReportLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref LambdaReportGen
+      Action: 'lambda:InvokeFunction'
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt GenerateReportRule.Arn
+      
+  GenerateReportRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: 'GenerateCredentialReport'
+      ScheduleExpression: !Ref GenerateReportCronExpression
+      Targets:
+        - Id: TriggerLambda
+          Arn: !GetAtt LambdaReportGen.Arn
+          Input: '{"task": "generate_credential_report"}'
+  
+  GetReportLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref LambdaReportGen
+      Action: 'lambda:InvokeFunction'
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt GetReportRule.Arn
+
+  GetReportRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: 'GetCredentialReport'
+      ScheduleExpression: !Ref GetReportCronExpression
+      Targets:
+        - Id: TriggerLambda
+          Arn: !GetAtt LambdaReportGen.Arn
+          Input: '{"task": "get_credential_report"}'
