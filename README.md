@@ -2,6 +2,10 @@
 
 Generate IAM Credential Reports from all your AWS managed accounts.
 
+## Solution Diagram
+
+![](architecture.drawio.png)
+
 ## Instructions (EN-US)
 
 1. Deploy the Cloudformation Template located in `stack/template.yml` in the AWS Account where you wish to store the generated IAM Credential Reports.
